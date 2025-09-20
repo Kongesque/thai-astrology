@@ -184,6 +184,20 @@ const PLANET_SYMBOLS: Record<string, [string, number | null]> = {
   uranus: ["๐", null],
 }
 
+interface SolarBaseValues {
+  relativeJulianDay: number
+  timeOfDayHours: number
+  solarCycleBaseMinutes: number
+  solarLongitudeCorrected: number
+  solarLongitudeMean: number
+}
+
+interface PlanetAdjustmentConstants {
+  primaryOffsetBaseline: number
+  primaryDenominatorBase: number
+  secondaryScaleFactor: number
+}
+
 // Helper Functions
 function wrap21600(value: number): number {
   const modValue = value % 21600
@@ -196,143 +210,177 @@ function calculateBaseValues(
   day: number,
   hour: number,
   minute: number,
-): [number, number, number, number, number] {
+): SolarBaseValues {
   const monthNum = ensureMonthTh(monthTh)
   const yearAd = yearBe - 543
 
-  const jy = monthNum > 2 ? yearAd : yearAd - 1
-  const jm = monthNum > 2 ? monthNum + 1 : monthNum + 13
-  const jc = Math.floor(jy * 0.01)
-  const jdBase = Math.floor(jy * 365.25) + Math.floor(jm * 30.6) + day + 1720997 - jc + Math.floor(jc * 0.25)
+  const julianYear = monthNum > 2 ? yearAd : yearAd - 1
+  const julianMonth = monthNum > 2 ? monthNum + 1 : monthNum + 13
+  const centuryComponent = Math.floor(julianYear * 0.01)
+  const julianDayBase =
+    Math.floor(julianYear * 365.25) +
+    Math.floor(julianMonth * 30.6) +
+    day +
+    1720997 -
+    centuryComponent +
+    Math.floor(centuryComponent * 0.25)
 
-  let D14: number, E11: number
+  let julianDayInteger: number
+  let fractionalDayBase: number
   if (hour < 12) {
-    D14 = jdBase - 1
-    E11 = hour / 24 - 0.5 + 1.5
+    julianDayInteger = julianDayBase - 1
+    fractionalDayBase = hour / 24 - 0.5 + 1.5
   } else {
-    D14 = jdBase
-    E11 = hour / 24 - 0.5
+    julianDayInteger = julianDayBase
+    fractionalDayBase = hour / 24 - 0.5
   }
 
-  const additionalTime = (hour / 60 + minute) / 60 / 60 / 24
-  const E14 = E11 + additionalTime
-  const julianDay = D14 + E14
+  const fractionalDayOffset = (hour / 60 + minute) / 60 / 60 / 24
+  const fractionalJulianDay = fractionalDayBase + fractionalDayOffset
+  const julianDay = julianDayInteger + fractionalJulianDay
 
   const relativeJulianDay = Math.round(julianDay - 1954167.5)
-  const timeFraction = hour + minute / 60
-  const yearRelative1181 = yearBe - 1181
+  const timeOfDayHours = hour + minute / 60
+  const relativeYearFrom1181 = yearBe - 1181
 
-  const solarCeiling = Math.ceil((292207 * yearRelative1181 + 373) / 800)
+  const solarCalendarCeiling = Math.ceil((292207 * relativeYearFrom1181 + 373) / 800)
 
-  const solarAdjF6 =
-    yearRelative1181 * 0.25875 +
-    Math.trunc(yearRelative1181 / 100 + 0.38) -
-    Math.trunc(yearRelative1181 / 4 + 0.5) -
-    Math.trunc(yearRelative1181 / 400 + 0.595) -
+  const solarEquationCorrection =
+    relativeYearFrom1181 * 0.25875 +
+    Math.trunc(relativeYearFrom1181 / 100 + 0.38) -
+    Math.trunc(relativeYearFrom1181 / 4 + 0.5) -
+    Math.trunc(relativeYearFrom1181 / 400 + 0.595) -
     5.53375
-  const solarAdjDays = Math.trunc(solarAdjF6)
-  const solarAdjHours = Math.trunc((solarAdjF6 - solarAdjDays) * 24)
-  const solarAdjMinutes = Math.trunc(((solarAdjF6 - solarAdjDays) * 24 - solarAdjHours) * 60)
+  const solarCorrectionDays = Math.trunc(solarEquationCorrection)
+  const solarCorrectionHours = Math.trunc((solarEquationCorrection - solarCorrectionDays) * 24)
+  const solarCorrectionMinutes = Math.trunc(
+    ((solarEquationCorrection - solarCorrectionDays) * 24 - solarCorrectionHours) * 60,
+  )
 
-  const currentTimeF8 = hour * 60 + minute / 60
-  const solarAdjTimeF9 = solarAdjHours * 60 + solarAdjMinutes / 60
-  const timeComparisonIndicator = currentTimeF8 > solarAdjTimeF9 ? 1 : 2
+  const currentTimeMinutes = hour * 60 + minute / 60
+  const solarCorrectionMinutesTotal = solarCorrectionHours * 60 + solarCorrectionMinutes / 60
+  const solarCorrectionComparison = currentTimeMinutes > solarCorrectionMinutesTotal ? 1 : 2
 
-  let solarCalcYear: number
-  if (relativeJulianDay < solarCeiling || (relativeJulianDay === solarCeiling && timeComparisonIndicator === 2)) {
-    solarCalcYear = yearRelative1181 - 1
+  let solarCycleYear: number
+  if (
+    relativeJulianDay < solarCalendarCeiling ||
+    (relativeJulianDay === solarCalendarCeiling && solarCorrectionComparison === 2)
+  ) {
+    solarCycleYear = relativeYearFrom1181 - 1
   } else {
-    solarCalcYear = yearRelative1181
+    solarCycleYear = relativeYearFrom1181
   }
 
-  const intermediateSolarDate = Math.trunc((solarCalcYear * 292207) / 800 + 373 / 800) + 1
+  const solarCyclePosition =
+    ((relativeJulianDay - 1) * 800 + Math.trunc((timeOfDayHours * 800) / 24) - 373) % 292207
+  const solarCycleRemainder = solarCyclePosition % 24350
+  const solarCycleTurns = Math.floor(solarCyclePosition / 24350)
+  const solarCycleDegrees = Math.floor(solarCycleRemainder / 811)
+  const solarCycleDegreeRemainder = solarCycleRemainder % 811
+  const solarCycleMinutes = Math.floor(solarCycleDegreeRemainder / 14) - 3
+  const solarMeanLongitudeRaw =
+    solarCycleTurns * 1800 + solarCycleDegrees * 60 + solarCycleMinutes
 
-  const B21Val = ((relativeJulianDay - 1) * 800 + Math.trunc((timeFraction * 800) / 24) - 373) % 292207
-  const C22Val = B21Val % 24350
-  const B22Val = Math.floor(B21Val / 24350)
-  const B23Val = Math.floor(C22Val / 811)
-  const C23Val = C22Val % 811
-  const B24Val = Math.floor(C23Val / 14) - 3
-  const D25Val = B22Val * 1800 + B23Val * 60 + B24Val
+  const solarLongitudeMean = wrap21600(solarMeanLongitudeRaw)
+  const solarLongitudeCorrected = wrap21600(solarLongitudeMean - 23)
 
-  const solarPositionMean = wrap21600(D25Val)
-  const solarPositionRaw = wrap21600(solarPositionMean - 23)
+  const solarCycleBaseOffset = solarCyclePosition >= 364 ? solarCycleYear - 610 : solarCycleYear - 611
+  const solarCycleBaseMinutes = solarCycleBaseOffset * 21600 + solarLongitudeCorrected
 
-  const E18Val = B21Val >= 364 ? solarCalcYear - 610 : solarCalcYear - 611
-  const solarCalcBase = E18Val * 21600 + solarPositionRaw
-
-  return [relativeJulianDay, timeFraction, solarCalcBase, solarPositionRaw, solarPositionMean]
+  return {
+    relativeJulianDay,
+    timeOfDayHours,
+    solarCycleBaseMinutes,
+    solarLongitudeCorrected,
+    solarLongitudeMean,
+  }
 }
 
-function getQuadrantVals(value: number): [number, number, number] {
-  const wrappedInput = wrap21600(value)
-  const quadrant = Math.floor(wrappedInput / 5400) + 1
-  const signMultiplier = [1, 2].includes(quadrant) ? -1 : 1
+function describeQuadrant(value: number): {
+  quadrantIndex: number
+  quadrantArcMinutes: number
+  directionMultiplier: number
+} {
+  const normalizedValue = wrap21600(value)
+  const quadrantIndex = Math.floor(normalizedValue / 5400) + 1
+  const directionMultiplier = [1, 2].includes(quadrantIndex) ? -1 : 1
 
-  let quadrantVal: number
-  if (quadrant === 1) quadrantVal = wrappedInput
-  else if (quadrant === 2) quadrantVal = 10800 - wrappedInput
-  else if (quadrant === 3) quadrantVal = wrappedInput - 10800
-  else quadrantVal = 21600 - wrappedInput
+  let quadrantArcMinutes: number
+  if (quadrantIndex === 1) quadrantArcMinutes = normalizedValue
+  else if (quadrantIndex === 2) quadrantArcMinutes = 10800 - normalizedValue
+  else if (quadrantIndex === 3) quadrantArcMinutes = normalizedValue - 10800
+  else quadrantArcMinutes = 21600 - normalizedValue
 
-  return [quadrant, quadrantVal, signMultiplier]
+  return { quadrantIndex, quadrantArcMinutes, directionMultiplier }
 }
 
-function getTableAdj(quadrantVal: number): number {
-  const baseIndex = Math.floor(quadrantVal / 1800)
-  const val1 = QUADRANT_ADJUST_TABLE[baseIndex % 4]
-  const val2 = QUADRANT_ADJUST_TABLE[(baseIndex + 1) % 4]
-  const interpFactor = quadrantVal / 1800 - baseIndex
-  const adj = Math.round((interpFactor * (val2 - val1) + val1) * 60)
-  return adj
+function lookupQuadrantAdjustment(quadrantArcMinutes: number): number {
+  const baseIndex = Math.floor(quadrantArcMinutes / 1800)
+  const lowerValue = QUADRANT_ADJUST_TABLE[baseIndex % 4]
+  const upperValue = QUADRANT_ADJUST_TABLE[(baseIndex + 1) % 4]
+  const interpolationFactor = quadrantArcMinutes / 1800 - baseIndex
+  const interpolated = interpolationFactor * (upperValue - lowerValue) + lowerValue
+  return Math.round(interpolated * 60)
 }
 
-function getSecondaryAdjParams(value: number): [number, number, number] {
-  const wrappedInput = wrap21600(value)
-  const quadrant = Math.floor(wrappedInput / 5400) + 1
+function getSecondaryAdjustmentParameters(value: number): {
+  halfAdjustment: number
+  secondaryDirection: number
+  interpolatedAdjustment: number
+} {
+  const normalizedValue = wrap21600(value)
+  const quadrantIndex = Math.floor(normalizedValue / 5400) + 1
 
-  let secondaryVal: number
-  if (quadrant === 1) secondaryVal = 5400 - wrappedInput
-  else if (quadrant === 2) secondaryVal = wrappedInput - 5400
-  else if (quadrant === 3) secondaryVal = 16200 - wrappedInput
-  else secondaryVal = wrappedInput - 16200
+  let secondaryArcMinutes: number
+  if (quadrantIndex === 1) secondaryArcMinutes = 5400 - normalizedValue
+  else if (quadrantIndex === 2) secondaryArcMinutes = normalizedValue - 5400
+  else if (quadrantIndex === 3) secondaryArcMinutes = 16200 - normalizedValue
+  else secondaryArcMinutes = normalizedValue - 16200
 
-  const baseIndex = Math.floor(secondaryVal / 1800)
-  const val1 = QUADRANT_ADJUST_TABLE[baseIndex % 4]
-  const val2 = QUADRANT_ADJUST_TABLE[(baseIndex + 1) % 4]
-  const interpFactor = secondaryVal / 1800 - baseIndex
-  const interpAdj = Math.round(interpFactor * (val2 - val1) + val1 + 0.5)
-  const g66Val = Math.floor(interpAdj / 2)
-  const signMultSecondary = [1, 4].includes(quadrant) ? 1 : -1
+  const baseIndex = Math.floor(secondaryArcMinutes / 1800)
+  const lowerValue = QUADRANT_ADJUST_TABLE[baseIndex % 4]
+  const upperValue = QUADRANT_ADJUST_TABLE[(baseIndex + 1) % 4]
+  const interpolationFactor = secondaryArcMinutes / 1800 - baseIndex
+  const interpolatedAdjustment = Math.round(interpolationFactor * (upperValue - lowerValue) + lowerValue + 0.5)
+  const halfAdjustment = Math.floor(interpolatedAdjustment / 2)
+  const secondaryDirection = [1, 4].includes(quadrantIndex) ? 1 : -1
 
-  return [g66Val, signMultSecondary, interpAdj]
+  return { halfAdjustment, secondaryDirection, interpolatedAdjustment }
 }
 
 function applyPlanetaryAdjustments(
   initialPos: number,
   baseCalcVal: number,
-  constants: { k51: number; k67Base: number; k87Mult: number },
+  constants: PlanetAdjustmentConstants,
 ): number {
   // First Adjustment Cycle
-  const val51 = initialPos - constants.k51
-  const [, quadVal1, signMult1] = getQuadrantVals(val51)
-  const adj1 = getTableAdj(quadVal1)
-  const [g66Val1, signMultSec1] = getSecondaryAdjParams(wrap21600(val51))
-  const denom1 = constants.k67Base + g66Val1 * signMultSec1
-  const appliedAdj1 = denom1 !== 0 ? Math.round((adj1 * 60) / denom1) : 0
-  const posAfterAdj1 = initialPos + appliedAdj1 * signMult1
+  const primaryOffset = initialPos - constants.primaryOffsetBaseline
+  const { quadrantArcMinutes: primaryQuadrantArc, directionMultiplier: primaryDirection } = describeQuadrant(primaryOffset)
+  const primaryTableAdjustment = lookupQuadrantAdjustment(primaryQuadrantArc)
+  const {
+    halfAdjustment: primaryHalfAdjustment,
+    secondaryDirection: primarySecondaryDirection,
+  } = getSecondaryAdjustmentParameters(wrap21600(primaryOffset))
+  const primaryDenominator =
+    constants.primaryDenominatorBase + primaryHalfAdjustment * primarySecondaryDirection
+  const primaryAdjustment = primaryDenominator !== 0 ? Math.round((primaryTableAdjustment * 60) / primaryDenominator) : 0
+  const positionAfterPrimaryAdjustment = initialPos + primaryAdjustment * primaryDirection
 
   // Second Adjustment Cycle
-  const val71 = wrap21600(posAfterAdj1) - baseCalcVal
-  const [, quadVal2, signMult2] = getQuadrantVals(val71)
-  const adj2 = getTableAdj(quadVal2)
-  const f86Val = Math.round(Math.round(adj2 / 60) / 3)
-  const f87Val = Math.round(denom1 * constants.k87Mult)
-  const f88Val = f86Val + f87Val
-  const [, signMultSec2, f85Val] = getSecondaryAdjParams(wrap21600(val71))
-  const denom2 = f88Val + f85Val * signMultSec2
-  const appliedAdj2 = denom2 !== 0 ? Math.round((adj2 * 60) / denom2) : 0
-  const finalPos = wrap21600(posAfterAdj1) + appliedAdj2 * signMult2
+  const secondaryOffset = wrap21600(positionAfterPrimaryAdjustment) - baseCalcVal
+  const { quadrantArcMinutes: secondaryQuadrantArc, directionMultiplier: secondaryDirection } = describeQuadrant(secondaryOffset)
+  const secondaryTableAdjustment = lookupQuadrantAdjustment(secondaryQuadrantArc)
+  const roundedSecondaryAdjustment = Math.round(Math.round(secondaryTableAdjustment / 60) / 3)
+  const scaledPrimaryDenominator = Math.round(primaryDenominator * constants.secondaryScaleFactor)
+  const secondaryNumeratorBase = roundedSecondaryAdjustment + scaledPrimaryDenominator
+  const {
+    secondaryDirection: interpolationDirection,
+    interpolatedAdjustment: secondaryInterpolatedAdjustment,
+  } = getSecondaryAdjustmentParameters(wrap21600(secondaryOffset))
+  const secondaryDenominator = secondaryNumeratorBase + secondaryInterpolatedAdjustment * interpolationDirection
+  const secondaryAdjustment =
+    secondaryDenominator !== 0 ? Math.round((secondaryTableAdjustment * 60) / secondaryDenominator) : 0
+  const finalPos = wrap21600(positionAfterPrimaryAdjustment) + secondaryAdjustment * secondaryDirection
 
   return wrap21600(finalPos)
 }
@@ -350,200 +398,259 @@ function calculateSunPrecisePosition(
   minute: number,
 ): number {
   const G_VALS_SUN: Record<number, number> = { 0: 0.0, 1: 35.0, 2: 67.0, 3: 94.0, 4: 116.0, 5: 129.0, 6: 134.0 }
-  const [, , , , solarPositionMean] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const d26Raw = solarPositionMean - 4800
-  const anomalyBaseB26 = wrap21600(d26Raw)
-  const quadrant = Math.floor(Math.trunc(anomalyBaseB26 / 5400)) + 1
-  const signMult = [1, 2].includes(quadrant) ? -1 : 1
+  const { solarLongitudeMean } = calculateBaseValues(monthTh, yearBe, day, hour, minute)
+  const meanAnomalyRaw = solarLongitudeMean - 4800
+  const meanAnomaly = wrap21600(meanAnomalyRaw)
+  const quadrantIndex = Math.floor(Math.trunc(meanAnomaly / 5400)) + 1
+  const directionMultiplier = [1, 2].includes(quadrantIndex) ? -1 : 1
 
-  let quadrantValB28: number
-  if (quadrant === 1) quadrantValB28 = anomalyBaseB26
-  else if (quadrant === 2) quadrantValB28 = 10800 - anomalyBaseB26
-  else if (quadrant === 3) quadrantValB28 = anomalyBaseB26 - 10800
-  else quadrantValB28 = 21600 - anomalyBaseB26
+  let quadrantArcMinutes: number
+  if (quadrantIndex === 1) quadrantArcMinutes = meanAnomaly
+  else if (quadrantIndex === 2) quadrantArcMinutes = 10800 - meanAnomaly
+  else if (quadrantIndex === 3) quadrantArcMinutes = meanAnomaly - 10800
+  else quadrantArcMinutes = 21600 - meanAnomaly
 
-  const e27Val = Math.floor(Math.trunc(quadrantValB28 / 900))
-  const e28Val = e27Val + 1
-  const gE27 = G_VALS_SUN[e27Val] ?? G_VALS_SUN[6]
-  const gE28 = G_VALS_SUN[e28Val] ?? G_VALS_SUN[6]
-  const interpFactor = quadrantValB28 / 900 - e27Val
-  const sunAdjE29 = Math.floor(Math.trunc(interpFactor * (gE28 - gE27) + gE27))
-  const d30Val = solarPositionMean + sunAdjE29 * signMult
-  const finalPosB30 = wrap21600(d30Val)
+  const tableIndexFloor = Math.floor(Math.trunc(quadrantArcMinutes / 900))
+  const tableIndexCeil = tableIndexFloor + 1
+  const tableValueFloor = G_VALS_SUN[tableIndexFloor] ?? G_VALS_SUN[6]
+  const tableValueCeil = G_VALS_SUN[tableIndexCeil] ?? G_VALS_SUN[6]
+  const interpolationFactor = quadrantArcMinutes / 900 - tableIndexFloor
+  const quadrantAdjustment = Math.floor(
+    Math.trunc(interpolationFactor * (tableValueCeil - tableValueFloor) + tableValueFloor),
+  )
+  const adjustedLongitude = solarLongitudeMean + quadrantAdjustment * directionMultiplier
+  const preciseLongitude = wrap21600(adjustedLongitude)
 
-  return finalPosB30
+  return preciseLongitude
 }
 
 // Planet calculation functions
 export function calculateUranus(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const g45 = Math.floor(Math.trunc(solarCalcBase / 84))
-  const g47 = Math.floor(solarCalcBase / 7224)
-  const initialPos = (g45 + g47 + 16277) % 21600
-  const val51 = initialPos - 7440
-  const [, quadVal1, signMult1] = getQuadrantVals(val51)
-  const adj1 = getTableAdj(quadVal1)
-  const [g66Val1, signMultSec1] = getSecondaryAdjParams(wrap21600(val51))
-  const denom1 = 38640 + g66Val1 * signMultSec1
-  const appliedAdj1 = denom1 !== 0 ? Math.round((adj1 * 60) / denom1) : 0
-  const posAfterAdj1 = initialPos + appliedAdj1 * signMult1
-  const val71 = wrap21600(posAfterAdj1) - solarPositionRaw
-  const [, quadVal2, signMult2] = getQuadrantVals(val71)
-  const adj2 = getTableAdj(quadVal2)
-  const g86Val = Math.round(Math.round(adj2 / 60) / 3)
-  const g87Val = Math.round((denom1 * 3) / 7)
-  const g88Val = g86Val + g87Val
-  const [, signMultSec2, g85Val] = getSecondaryAdjParams(wrap21600(val71))
-  const denom2 = g88Val + g85Val * signMultSec2
-  const appliedAdj2 = denom2 !== 0 ? Math.round((adj2 * 60) / denom2) : 0
-  const finalPos = wrap21600(posAfterAdj1) + appliedAdj2 * signMult2
-  const finalWrappedPos = wrap21600(finalPos)
-  return getSignIndex(finalWrappedPos)
-}
-
-export function calculateKetu(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [relativeJulianDay, timeFraction] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const i46Val = (relativeJulianDay - 1 - 344) % 679
-  const i49Val = Math.trunc(((i46Val + timeFraction / 24) * 21600) / 679)
-  const i50Val = i49Val % 21600
-  const finalPos = wrap21600(21600 - i50Val)
-  return getSignIndex(finalPos)
-}
-
-export function calculateRahu(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const h45Val = Math.floor(solarCalcBase / 20)
-  const h47Val = Math.floor(solarCalcBase / 265)
-  const h49Val = h45Val + h47Val
-  const h50Val = h49Val % 21600
-  const finalPos = wrap21600(15150 - h50Val)
-  return getSignIndex(finalPos)
-}
-
-export function calculateSaturn(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const f45 = Math.floor(Math.trunc(solarCalcBase / 30))
-  const f47 = Math.floor((solarCalcBase * 6) / 10000)
-  const initialPos = (f45 + f47 + 11944) % 21600
-  const constants = { k51: 14820, k67Base: 3780, k87Mult: 7 / 6 }
-  const finalPos = applyPlanetaryAdjustments(initialPos, solarPositionRaw, constants)
-  return getSignIndex(finalPos)
-}
-
-export function calculateVenus(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const e45 = Math.floor(Math.trunc((solarCalcBase * 5) / 3))
-  const e47 = Math.floor((solarCalcBase * 10) / 243)
-  const venusMeanPos = (e45 - e47 + 10944) % 21600
-  const val51 = solarPositionRaw - 4800
-  const [, quadVal1, signMult1] = getQuadrantVals(val51)
-  const adj1 = getTableAdj(quadVal1)
-  const [g66Val1, signMultSec1] = getSecondaryAdjParams(wrap21600(val51))
-  const denom1 = 19200 + g66Val1 * signMultSec1
-  const appliedAdj1 = denom1 !== 0 ? Math.round((adj1 * 60) / denom1) : 0
-  const posAfterAdj1 = solarPositionRaw + appliedAdj1 * signMult1
-  const val71 = wrap21600(posAfterAdj1) - venusMeanPos
-  const [, quadVal2, signMult2] = getQuadrantVals(val71)
-  const adj2 = getTableAdj(quadVal2)
-  const e86Val = Math.round(Math.round(adj2 / 60) / 3)
-  const e87Val = 60 * 11
-  const e88Val = e86Val + e87Val
-  const [, signMultSec2, e85Val] = getSecondaryAdjParams(wrap21600(val71))
-  const denom2 = e88Val + e85Val * signMultSec2
-  const appliedAdj2 = denom2 !== 0 ? Math.round((adj2 * 60) / denom2) : 0
-  const finalPos = wrap21600(posAfterAdj1) + appliedAdj2 * signMult2
-  return getSignIndex(wrap21600(finalPos))
-}
-
-export function calculateJupiter(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const d45 = Math.floor(Math.trunc(solarCalcBase / 12))
-  const d47 = Math.floor(solarCalcBase / 1032)
-  const initialPos = (d45 + d47 + 14297) % 21600
-  const constants = { k51: 10320, k67Base: 5520, k87Mult: 3 / 7 }
-  const finalPos = applyPlanetaryAdjustments(initialPos, solarPositionRaw, constants)
-  return getSignIndex(finalPos)
-}
-
-export function calculateMercury(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const c45 = Math.floor(Math.trunc((solarCalcBase * 7) / 46))
-  const c47 = Math.floor(solarCalcBase * 4)
-  const mercuryMeanPos = (c45 + c47 + 10642) % 21600
-  const val51 = solarPositionRaw - 13200
-  const [, quadVal1, signMult1] = getQuadrantVals(val51)
-  const adj1 = getTableAdj(quadVal1)
-  const [g66Val1, signMultSec1] = getSecondaryAdjParams(wrap21600(val51))
-  const denom1 = 6000 + g66Val1 * signMultSec1
-  const appliedAdj1 = denom1 !== 0 ? Math.round((adj1 * 60) / denom1) : 0
-  const posAfterAdj1 = solarPositionRaw + appliedAdj1 * signMult1
-  const val71 = wrap21600(posAfterAdj1) - mercuryMeanPos
-  const [, quadVal2, signMult2] = getQuadrantVals(val71)
-  const adj2 = getTableAdj(quadVal2)
-  const c86Val = Math.round(Math.round(adj2 / 60) / 3)
-  const c87Val = 60 * 21
-  const c88Val = c86Val + c87Val
-  const [, signMultSec2, c85Val] = getSecondaryAdjParams(wrap21600(val71))
-  const denom2 = c88Val + c85Val * signMultSec2
-  const appliedAdj2 = denom2 !== 0 ? Math.round((adj2 * 60) / denom2) : 0
-  const finalPos = wrap21600(posAfterAdj1) + appliedAdj2 * signMult2
-  return getSignIndex(wrap21600(finalPos))
-}
-
-export function calculateMars(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const [, , solarCalcBase, solarPositionRaw] = calculateBaseValues(monthTh, yearBe, day, hour, minute)
-  const b45 = Math.floor(Math.trunc(solarCalcBase / 2))
-  const b47 = Math.floor((solarCalcBase * 16) / 505)
-  const initialPos = (b45 + b47 + 5420) % 21600
-  const constants = { k51: 7620, k67Base: 2700, k87Mult: 4 / 15 }
-  const finalPos = applyPlanetaryAdjustments(initialPos, solarPositionRaw, constants)
-  return getSignIndex(finalPos)
-}
-
-export function calculateMoon(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const G_VALS_MOON: Record<number, number> = { 0: 0.0, 1: 77.0, 2: 148.0, 3: 209.0, 4: 256.0, 5: 286.0, 6: 296.0 }
-  const [relativeJulianDay, timeFraction, , , solarPositionMean] = calculateBaseValues(
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
     monthTh,
     yearBe,
     day,
     hour,
     minute,
   )
-  const b34Val = ((relativeJulianDay - 1) * 703 + 650 + Math.trunc((timeFraction * 703) / 24)) % 20760
-  const b35Val = Math.floor(b34Val / 692)
-  const b36Val = b34Val % 692
-  const d33Val = b35Val * 720 + Math.trunc(1.04 * b36Val) - 40 + solarPositionMean
-  const d34Val = wrap21600(d33Val)
-  const d35Val = (relativeJulianDay - 1 - 621) % 3232
-  const e36Val = Math.trunc(((d35Val + timeFraction / 24) / 3232) * 21600) + 2
-  const d36Val = wrap21600(e36Val)
-  const d37ValRaw = d34Val - d36Val
-  const b37Val = wrap21600(d37ValRaw)
-  const b38Val = Math.floor(Math.trunc(b37Val / 5400)) + 1
-  const b40Val = [1, 2].includes(b38Val) ? -1 : 1
+  const primaryCycleComponent = Math.floor(Math.trunc(solarCycleBaseMinutes / 84))
+  const secondaryCycleComponent = Math.floor(solarCycleBaseMinutes / 7224)
+  const meanLongitude = (primaryCycleComponent + secondaryCycleComponent + 16277) % 21600
+  const uranusAdjustmentConstants: PlanetAdjustmentConstants = {
+    primaryOffsetBaseline: 7440,
+    primaryDenominatorBase: 38640,
+    secondaryScaleFactor: 3 / 7,
+  }
+  const adjustedLongitude = applyPlanetaryAdjustments(meanLongitude, solarLongitudeCorrected, uranusAdjustmentConstants)
+  return getSignIndex(adjustedLongitude)
+}
 
-  let quadrantValB39: number
-  if (b38Val === 1) quadrantValB39 = b37Val
-  else if (b38Val === 2) quadrantValB39 = 10800 - b37Val
-  else if (b38Val === 3) quadrantValB39 = b37Val - 10800
-  else quadrantValB39 = 21600 - b37Val
+export function calculateKetu(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { relativeJulianDay, timeOfDayHours } = calculateBaseValues(monthTh, yearBe, day, hour, minute)
+  const lunarNodeCycleOffset = (relativeJulianDay - 1 - 344) % 679
+  const normalizedCyclePosition = Math.trunc(((lunarNodeCycleOffset + timeOfDayHours / 24) * 21600) / 679)
+  const positionWithinCycle = normalizedCyclePosition % 21600
+  const finalLongitude = wrap21600(21600 - positionWithinCycle)
+  return getSignIndex(finalLongitude)
+}
 
-  const e38Val = Math.floor(Math.trunc(quadrantValB39 / 900))
-  const e39Val = e38Val + 1
-  const gE38 = G_VALS_MOON[e38Val] ?? G_VALS_MOON[6]
-  const gE39 = G_VALS_MOON[e39Val] ?? G_VALS_MOON[6]
-  const interpFactorE40 = quadrantValB39 / 900 - e38Val
-  const e40Val = Math.floor(Math.trunc(interpFactorE40 * (gE39 - gE38) + gE38))
-  const d42Val = d34Val + e40Val * b40Val
-  const b42Val = wrap21600(d42Val)
-  const b43Val = Math.floor(b42Val / 1800)
-  const finalSignIndex = b43Val < 12 ? b43Val : 0
+export function calculateRahu(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes } = calculateBaseValues(monthTh, yearBe, day, hour, minute)
+  const primaryComponent = Math.floor(solarCycleBaseMinutes / 20)
+  const secondaryComponent = Math.floor(solarCycleBaseMinutes / 265)
+  const meanLongitude = primaryComponent + secondaryComponent
+  const wrappedLongitude = meanLongitude % 21600
+  const finalLongitude = wrap21600(15150 - wrappedLongitude)
+  return getSignIndex(finalLongitude)
+}
+
+export function calculateSaturn(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const primaryCycleComponent = Math.floor(Math.trunc(solarCycleBaseMinutes / 30))
+  const secondaryCycleComponent = Math.floor((solarCycleBaseMinutes * 6) / 10000)
+  const meanLongitude = (primaryCycleComponent + secondaryCycleComponent + 11944) % 21600
+  const saturnAdjustmentConstants: PlanetAdjustmentConstants = {
+    primaryOffsetBaseline: 14820,
+    primaryDenominatorBase: 3780,
+    secondaryScaleFactor: 7 / 6,
+  }
+  const adjustedLongitude = applyPlanetaryAdjustments(meanLongitude, solarLongitudeCorrected, saturnAdjustmentConstants)
+  return getSignIndex(adjustedLongitude)
+}
+
+export function calculateVenus(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const primaryCycleComponent = Math.floor(Math.trunc((solarCycleBaseMinutes * 5) / 3))
+  const secondaryCycleComponent = Math.floor((solarCycleBaseMinutes * 10) / 243)
+  const venusMeanLongitude = (primaryCycleComponent - secondaryCycleComponent + 10944) % 21600
+  const primaryOffset = solarLongitudeCorrected - 4800
+  const { quadrantArcMinutes: primaryQuadrantArc, directionMultiplier: primaryDirection } = describeQuadrant(primaryOffset)
+  const primaryTableAdjustment = lookupQuadrantAdjustment(primaryQuadrantArc)
+  const {
+    halfAdjustment: primaryHalfAdjustment,
+    secondaryDirection: primarySecondaryDirection,
+  } = getSecondaryAdjustmentParameters(wrap21600(primaryOffset))
+  const primaryDenominator = 19200 + primaryHalfAdjustment * primarySecondaryDirection
+  const primaryAdjustment =
+    primaryDenominator !== 0 ? Math.round((primaryTableAdjustment * 60) / primaryDenominator) : 0
+  const positionAfterPrimaryAdjustment = solarLongitudeCorrected + primaryAdjustment * primaryDirection
+  const secondaryOffset = wrap21600(positionAfterPrimaryAdjustment) - venusMeanLongitude
+  const { quadrantArcMinutes: secondaryQuadrantArc, directionMultiplier: secondaryDirection } =
+    describeQuadrant(secondaryOffset)
+  const secondaryTableAdjustment = lookupQuadrantAdjustment(secondaryQuadrantArc)
+  const roundedSecondaryAdjustment = Math.round(Math.round(secondaryTableAdjustment / 60) / 3)
+  const fixedVenusAdjustment = 60 * 11
+  const secondaryNumeratorBase = roundedSecondaryAdjustment + fixedVenusAdjustment
+  const {
+    secondaryDirection: interpolationDirection,
+    interpolatedAdjustment: secondaryInterpolatedAdjustment,
+  } = getSecondaryAdjustmentParameters(wrap21600(secondaryOffset))
+  const secondaryDenominator = secondaryNumeratorBase + secondaryInterpolatedAdjustment * interpolationDirection
+  const secondaryAdjustment =
+    secondaryDenominator !== 0 ? Math.round((secondaryTableAdjustment * 60) / secondaryDenominator) : 0
+  const finalLongitude = wrap21600(positionAfterPrimaryAdjustment) + secondaryAdjustment * secondaryDirection
+  return getSignIndex(wrap21600(finalLongitude))
+}
+
+export function calculateJupiter(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const primaryCycleComponent = Math.floor(Math.trunc(solarCycleBaseMinutes / 12))
+  const secondaryCycleComponent = Math.floor(solarCycleBaseMinutes / 1032)
+  const meanLongitude = (primaryCycleComponent + secondaryCycleComponent + 14297) % 21600
+  const jupiterAdjustmentConstants: PlanetAdjustmentConstants = {
+    primaryOffsetBaseline: 10320,
+    primaryDenominatorBase: 5520,
+    secondaryScaleFactor: 3 / 7,
+  }
+  const adjustedLongitude = applyPlanetaryAdjustments(meanLongitude, solarLongitudeCorrected, jupiterAdjustmentConstants)
+  return getSignIndex(adjustedLongitude)
+}
+
+export function calculateMercury(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const primaryCycleComponent = Math.floor(Math.trunc((solarCycleBaseMinutes * 7) / 46))
+  const secondaryCycleComponent = Math.floor(solarCycleBaseMinutes * 4)
+  const mercuryMeanLongitude = (primaryCycleComponent + secondaryCycleComponent + 10642) % 21600
+  const primaryOffset = solarLongitudeCorrected - 13200
+  const { quadrantArcMinutes: primaryQuadrantArc, directionMultiplier: primaryDirection } = describeQuadrant(primaryOffset)
+  const primaryTableAdjustment = lookupQuadrantAdjustment(primaryQuadrantArc)
+  const {
+    halfAdjustment: primaryHalfAdjustment,
+    secondaryDirection: primarySecondaryDirection,
+  } = getSecondaryAdjustmentParameters(wrap21600(primaryOffset))
+  const primaryDenominator = 6000 + primaryHalfAdjustment * primarySecondaryDirection
+  const primaryAdjustment =
+    primaryDenominator !== 0 ? Math.round((primaryTableAdjustment * 60) / primaryDenominator) : 0
+  const positionAfterPrimaryAdjustment = solarLongitudeCorrected + primaryAdjustment * primaryDirection
+  const secondaryOffset = wrap21600(positionAfterPrimaryAdjustment) - mercuryMeanLongitude
+  const { quadrantArcMinutes: secondaryQuadrantArc, directionMultiplier: secondaryDirection } =
+    describeQuadrant(secondaryOffset)
+  const secondaryTableAdjustment = lookupQuadrantAdjustment(secondaryQuadrantArc)
+  const roundedSecondaryAdjustment = Math.round(Math.round(secondaryTableAdjustment / 60) / 3)
+  const fixedMercuryAdjustment = 60 * 21
+  const secondaryNumeratorBase = roundedSecondaryAdjustment + fixedMercuryAdjustment
+  const {
+    secondaryDirection: interpolationDirection,
+    interpolatedAdjustment: secondaryInterpolatedAdjustment,
+  } = getSecondaryAdjustmentParameters(wrap21600(secondaryOffset))
+  const secondaryDenominator = secondaryNumeratorBase + secondaryInterpolatedAdjustment * interpolationDirection
+  const secondaryAdjustment =
+    secondaryDenominator !== 0 ? Math.round((secondaryTableAdjustment * 60) / secondaryDenominator) : 0
+  const finalLongitude = wrap21600(positionAfterPrimaryAdjustment) + secondaryAdjustment * secondaryDirection
+  return getSignIndex(wrap21600(finalLongitude))
+}
+
+export function calculateMars(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const { solarCycleBaseMinutes, solarLongitudeCorrected } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const primaryCycleComponent = Math.floor(Math.trunc(solarCycleBaseMinutes / 2))
+  const secondaryCycleComponent = Math.floor((solarCycleBaseMinutes * 16) / 505)
+  const meanLongitude = (primaryCycleComponent + secondaryCycleComponent + 5420) % 21600
+  const marsAdjustmentConstants: PlanetAdjustmentConstants = {
+    primaryOffsetBaseline: 7620,
+    primaryDenominatorBase: 2700,
+    secondaryScaleFactor: 4 / 15,
+  }
+  const adjustedLongitude = applyPlanetaryAdjustments(meanLongitude, solarLongitudeCorrected, marsAdjustmentConstants)
+  return getSignIndex(adjustedLongitude)
+}
+
+export function calculateMoon(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
+  const G_VALS_MOON: Record<number, number> = { 0: 0.0, 1: 77.0, 2: 148.0, 3: 209.0, 4: 256.0, 5: 286.0, 6: 296.0 }
+  const { relativeJulianDay, timeOfDayHours, solarLongitudeMean } = calculateBaseValues(
+    monthTh,
+    yearBe,
+    day,
+    hour,
+    minute,
+  )
+  const lunarMeanCycle =
+    ((relativeJulianDay - 1) * 703 + 650 + Math.trunc((timeOfDayHours * 703) / 24)) % 20760
+  const meanCycleQuotient = Math.floor(lunarMeanCycle / 692)
+  const meanCycleRemainder = lunarMeanCycle % 692
+  const meanLongitudeEstimate = meanCycleQuotient * 720 + Math.trunc(1.04 * meanCycleRemainder) - 40 + solarLongitudeMean
+  const meanLongitude = wrap21600(meanLongitudeEstimate)
+  const anomalyCycle = (relativeJulianDay - 1 - 621) % 3232
+  const anomalyLongitude = Math.trunc(((anomalyCycle + timeOfDayHours / 24) / 3232) * 21600) + 2
+  const anomalyLongitudeWrapped = wrap21600(anomalyLongitude)
+  const longitudeDifferenceRaw = meanLongitude - anomalyLongitudeWrapped
+  const longitudeDifference = wrap21600(longitudeDifferenceRaw)
+  const quadrantIndex = Math.floor(Math.trunc(longitudeDifference / 5400)) + 1
+  const directionMultiplier = [1, 2].includes(quadrantIndex) ? -1 : 1
+
+  let quadrantArcMinutes: number
+  if (quadrantIndex === 1) quadrantArcMinutes = longitudeDifference
+  else if (quadrantIndex === 2) quadrantArcMinutes = 10800 - longitudeDifference
+  else if (quadrantIndex === 3) quadrantArcMinutes = longitudeDifference - 10800
+  else quadrantArcMinutes = 21600 - longitudeDifference
+
+  const tableIndexFloor = Math.floor(Math.trunc(quadrantArcMinutes / 900))
+  const tableIndexCeil = tableIndexFloor + 1
+  const tableValueFloor = G_VALS_MOON[tableIndexFloor] ?? G_VALS_MOON[6]
+  const tableValueCeil = G_VALS_MOON[tableIndexCeil] ?? G_VALS_MOON[6]
+  const interpolationFactor = quadrantArcMinutes / 900 - tableIndexFloor
+  const quadrantAdjustment = Math.floor(
+    Math.trunc(interpolationFactor * (tableValueCeil - tableValueFloor) + tableValueFloor),
+  )
+  const adjustedLongitude = meanLongitude + quadrantAdjustment * directionMultiplier
+  const wrappedLongitude = wrap21600(adjustedLongitude)
+  const signIndex = Math.floor(wrappedLongitude / 1800)
+  const finalSignIndex = signIndex < 12 ? signIndex : 0
   return finalSignIndex
 }
 
 export function calculateSun(monthTh: number, yearBe: number, day: number, hour: number, minute: number): number {
-  const finalPosB30 = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
-  return getSignIndex(finalPosB30)
+  const preciseLongitude = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
+  return getSignIndex(preciseLongitude)
 }
 
 export function calculateSunDegrees(
@@ -553,10 +660,10 @@ export function calculateSunDegrees(
   hour: number,
   minute: number,
 ): number {
-  const finalPosB30 = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
-  const f30Val = finalPosB30 % 1800
-  const d31Val = Math.trunc(f30Val / 60)
-  return d31Val
+  const preciseLongitude = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
+  const minutesWithinCurrentSign = preciseLongitude % 1800
+  const degreesInSign = Math.trunc(minutesWithinCurrentSign / 60)
+  return degreesInSign
 }
 
 export function calculateSunMinutes(
@@ -566,10 +673,10 @@ export function calculateSunMinutes(
   hour: number,
   minute: number,
 ): number {
-  const finalPosB30 = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
-  const f30Val = finalPosB30 % 1800
-  const f31Val = Math.trunc(f30Val % 60)
-  return f31Val
+  const preciseLongitude = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
+  const minutesWithinCurrentSign = preciseLongitude % 1800
+  const minutesWithinDegree = Math.trunc(minutesWithinCurrentSign % 60)
+  return minutesWithinDegree
 }
 
 export function calculateAscendant(
@@ -580,79 +687,74 @@ export function calculateAscendant(
   minute: number,
   province: string,
 ): number {
-  const sunPrecisePosB30 = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
-  const sunSignIndex = Math.floor(Math.trunc(sunPrecisePosB30 / 1800))
-  const sunPosInSignMinutesArc = sunPrecisePosB30 % 1800
-  const sunDegreesInSign = Math.trunc(sunPosInSignMinutesArc / 60)
-  const sunMinutesInDegree = Math.trunc(sunPosInSignMinutesArc % 60)
-  const provinceOffsetMin = PROVINCE_TIME_OFFSETS[province] ?? 18
-  const localTimeMin = hour * 60 + minute
-  const cumulativeDurationAtSunSignStart = SIGN_DURATIONS_MINUTES.slice(0, sunSignIndex).reduce(
+  const sunLongitude = calculateSunPrecisePosition(monthTh, yearBe, day, hour, minute)
+  const sunSignIndex = Math.floor(Math.trunc(sunLongitude / 1800))
+  const sunMinutesInSign = sunLongitude % 1800
+  const sunDegreesWithinSign = Math.trunc(sunMinutesInSign / 60)
+  const sunMinutesWithinDegree = Math.trunc(sunMinutesInSign % 60)
+  const provinceSunriseOffsetMinutes = PROVINCE_TIME_OFFSETS[province] ?? 18
+  const localTimeMinutes = hour * 60 + minute
+  const minutesBeforeSunSign = SIGN_DURATIONS_MINUTES.slice(0, sunSignIndex).reduce(
     (sum, duration) => sum + duration,
     0,
   )
-  const sunProgressTotalDegrees = sunDegreesInSign + sunMinutesInDegree / 60
-  const sunSignDuration = SIGN_DURATIONS_MINUTES[sunSignIndex]
-  const sunDurationInCurrentSign = sunSignDuration > 0 ? sunSignDuration * (sunProgressTotalDegrees / 30) : 0
-  const sunTotalProgressionMin = cumulativeDurationAtSunSignStart + sunDurationInCurrentSign
-  const sunriseTimeMinutes = 360 + provinceOffsetMin
-  let j19Val = (localTimeMin - sunriseTimeMinutes) % 1440
-  if (j19Val < 0) j19Val += 1440
-  let ascendantTimeMin = (sunTotalProgressionMin + j19Val) % 1440
-  if (ascendantTimeMin < 0) ascendantTimeMin += 1440
+  const sunProgressDegrees = sunDegreesWithinSign + sunMinutesWithinDegree / 60
+  const sunSignDurationMinutes = SIGN_DURATIONS_MINUTES[sunSignIndex]
+  const sunTraversalMinutes =
+    sunSignDurationMinutes > 0 ? sunSignDurationMinutes * (sunProgressDegrees / 30) : 0
+  const sunTotalProgressionMinutes = minutesBeforeSunSign + sunTraversalMinutes
+  const sunriseTimeMinutes = 360 + provinceSunriseOffsetMinutes
+  let elapsedSinceSunrise = (localTimeMinutes - sunriseTimeMinutes) % 1440
+  if (elapsedSinceSunrise < 0) elapsedSinceSunrise += 1440
+  let ascendantMinutesOfDay = (sunTotalProgressionMinutes + elapsedSinceSunrise) % 1440
+  if (ascendantMinutesOfDay < 0) ascendantMinutesOfDay += 1440
 
   let ascendantSignIndex = 0
-  let cumulativeTime = 0.0
-  let degreesInAscendantSign = 0.0
+  let cumulativeMinutes = 0.0
+  let degreesWithinAscendantSign = 0.0
 
-  for (let i = 0; i < SIGN_DURATIONS_MINUTES.length; i++) {
-    const signDuration = SIGN_DURATIONS_MINUTES[i]
+  for (let signIndex = 0; signIndex < SIGN_DURATIONS_MINUTES.length; signIndex++) {
+    const signDuration = SIGN_DURATIONS_MINUTES[signIndex]
     if (signDuration <= 0) continue
 
-    const startOfSign = cumulativeTime
-    const endOfSign = cumulativeTime + signDuration
+    const startOfSign = cumulativeMinutes
+    const endOfSign = cumulativeMinutes + signDuration
 
-    let fallsInSign = false
-    if (startOfSign < endOfSign) {
-      if (ascendantTimeMin >= startOfSign && ascendantTimeMin < endOfSign) {
-        fallsInSign = true
-      }
-    } else {
-      if (ascendantTimeMin >= startOfSign || ascendantTimeMin < endOfSign) {
-        fallsInSign = true
-      }
-    }
+    const wrapsAround = startOfSign >= endOfSign
+    const isWithinSign = wrapsAround
+      ? ascendantMinutesOfDay >= startOfSign || ascendantMinutesOfDay < endOfSign
+      : ascendantMinutesOfDay >= startOfSign && ascendantMinutesOfDay < endOfSign
 
-    if (fallsInSign) {
-      ascendantSignIndex = i
-      let timeIntoAscendantSign = (ascendantTimeMin - startOfSign) % 1440
-      if (timeIntoAscendantSign < 0) timeIntoAscendantSign += 1440
-      degreesInAscendantSign = (timeIntoAscendantSign * 30) / signDuration
+    if (isWithinSign) {
+      ascendantSignIndex = signIndex
+      let minutesIntoAscendantSign = (ascendantMinutesOfDay - startOfSign) % 1440
+      if (minutesIntoAscendantSign < 0) minutesIntoAscendantSign += 1440
+      degreesWithinAscendantSign = (minutesIntoAscendantSign * 30) / signDuration
       break
     }
 
-    cumulativeTime = endOfSign % 1440
+    cumulativeMinutes = endOfSign % 1440
   }
 
-  const k35Val = (ascendantSignIndex * 30 + degreesInAscendantSign) * 60
-  const k36Val = Math.trunc(k35Val / 1800)
-  return k36Val
+  const ascendantLongitudeMinutes = (ascendantSignIndex * 30 + degreesWithinAscendantSign) * 60
+  const ascendantSign = Math.trunc(ascendantLongitudeMinutes / 1800)
+  return ascendantSign
 }
 
 export function calculateTanuseth(positions: Record<string, number>, ascSign: number): number {
   try {
     const lord1Idx = MAP_PLANETS[ascSign]
     const lord1Name = SIGN_PLANETS[lord1Idx]
-    const sign1 = positions[lord1Name]
+    const firstLordSign = positions[lord1Name]
 
-    const lord2Idx = MAP_PLANETS[sign1]
+    const lord2Idx = MAP_PLANETS[firstLordSign]
     const lord2Name = SIGN_PLANETS[lord2Idx]
-    const sign2 = positions[lord2Name]
+    const secondLordSign = positions[lord2Name]
 
-    const m36 = ((sign1 - ascSign) % 12) + 1
-    const m38 = ((sign2 - sign1) % 12) + 1
+    const ascendantDistance = ((firstLordSign - ascSign) % 12) + 1
+    const secondStepDistance = ((secondLordSign - firstLordSign) % 12) + 1
 
-    const result = (m36 * m38) % 7 || 7
+    const result = (ascendantDistance * secondStepDistance) % 7 || 7
     return result
   } catch {
     return -1
