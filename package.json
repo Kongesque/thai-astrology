@@ -1,0 +1,37 @@
+{
+  "name": "thai-astrology",
+  "version": "0.1.6",
+  "description": "Thai astrology ephemeris calculations and utilities for Node.js and TypeScript projects.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "tsc --build --clean",
+    "build": "tsc --build",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "thai",
+    "astrology",
+    "horoscope",
+    "ephemeris",
+    "lunar"
+  ],
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
