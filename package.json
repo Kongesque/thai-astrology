@@ -20,7 +20,7 @@
     "build": "tsc --build",
     "prepublishOnly": "npm run build",
     "postpublish": "npm dist-tag add thai-astrology@${npm_package_version} latest",
-    "test": "echo \"No tests specified\" && exit 0"
+    "test": "npm run build && node test/chart.test.js"
   },
   "keywords": [
     "thai",
