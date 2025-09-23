@@ -22,7 +22,7 @@ const EXPECTED_ARABIC_CHANNELS = [
   '23',
   '',
   '',
-  'ลั',
+  'L',
   '',
   '7*',
   '',

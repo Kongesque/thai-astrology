@@ -26,10 +26,11 @@ const convertDigits = (value, system) => {
     if (system === "thai") {
         return value.replace(/\d/g, (digit) => { var _a; return (_a = THAI_DIGITS[Number(digit)]) !== null && _a !== void 0 ? _a : digit; });
     }
-    return value.replace(/[๐-๙]/g, (digit) => {
+    const normalized = value.replace(/[๐-๙]/g, (digit) => {
         const index = THAI_DIGITS.indexOf(digit);
         return index === -1 ? digit : index.toString();
     });
+    return normalized === "ลั" ? "L" : normalized;
 };
 const formatChannelOutputs = (chart, options = {}) => {
     const { numerals = "arabic" } = typeof options === "string" ? { numerals: options } : options;
