@@ -2,7 +2,15 @@
 
 const assert = require('node:assert/strict')
 
-const { generateThaiAstrologyChart, formatChannelOutputs } = require('../dist')
+const {
+  generateThaiAstrologyChart,
+  formatChannelOutputs,
+  thlDate,
+  thLunarHoliday,
+  thlDateFromCivil,
+  thLunarHolidayFromCivil,
+  createThaiDate,
+} = require('../dist')
 
 const SAMPLE_INPUT = {
   day: 15,
@@ -56,10 +64,25 @@ function testFormatChannelOutputs() {
   assert.deepEqual(formatChannelOutputs(chart, 'thai'), EXPECTED_THAI_CHANNELS)
 }
 
+function testThaiCivilDateHelpers() {
+  const civilInput = { year: 2568, month: 9, day: 24 }
+
+  const viaObject = thlDateFromCivil(civilInput)
+  const viaDate = thlDate(createThaiDate(civilInput))
+
+  assert.equal(viaObject, viaDate)
+  assert.equal(viaObject, thlDate(civilInput))
+
+  const ceInput = { year: 2025, month: 11, day: 5, calendar: 'CE' }
+  assert.equal(thLunarHolidayFromCivil(ceInput), 'วันลอยกระทง')
+  assert.equal(thLunarHoliday(createThaiDate({ year: 2568, month: 11, day: 5 })), 'วันลอยกระทง')
+}
+
 function run() {
   const tests = [
     ['generateThaiAstrologyChart returns expected sun position', testSunPosition],
     ['formatChannelOutputs renders arabic and thai numerals as expected', testFormatChannelOutputs],
+    ['civil date helpers align with Date inputs', testThaiCivilDateHelpers],
   ]
 
   let passed = 0

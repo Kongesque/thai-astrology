@@ -19,6 +19,7 @@ const astro_calculation_1 = require("./engine/astro-calculation");
 const ruling_planets_1 = require("./engine/astro/ruling-planets");
 __exportStar(require("./engine/astro-calculation"), exports);
 __exportStar(require("./engine/astro/ruling-planets"), exports);
+__exportStar(require("./engine/thai-lunar"), exports);
 const THAI_DIGITS = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
 const CHANNEL_PREFIX_PATTERN = /^Channel\s+\d+:/i;
 const stripChannelLabel = (value) => value.replace(CHANNEL_PREFIX_PATTERN, "").trimStart();
